@@ -9,7 +9,6 @@ import {
   Users, Tag, Lock, AlertCircle, Info, Filter, Calendar, Coins, BookOpen
 } from 'lucide-react';
 
-// Firebase Config
 const getFirebaseConfig = () => {
   let config = {};
   try {
@@ -39,6 +38,7 @@ const App = () => {
   const [newCategory, setNewCategory] = useState('');
   const [newMember, setNewMember] = useState('');
   const [reportFilters, setReportFilters] = useState({ startDate: '', endDate: '', member: '', type: '' });
+  
   const [formData, setFormData] = useState({
     type: 'simpanan', amount: '', description: '', 
     category: '', member: '', date: new Date().toISOString().split('T')[0],
@@ -74,6 +74,13 @@ const App = () => {
     return () => { unsubscribeTrans(); unsubscribeMaster(); };
   }, [user, role]);
 
+  const stats = useMemo(() => {
+    const approved = transactions.filter(t => t.status === 'approved');
+    const simpanan = approved.filter(t => t.type === 'simpanan').reduce((s, t) => s + Number(t.amount), 0);
+    const pengeluaran = approved.filter(t => t.type === 'pengeluaran').reduce((s, t) => s + Number(t.amount), 0);
+    return { total: simpanan - pengeluaran, simpanan, pengeluaran };
+  }, [transactions]);
+
   const filteredTransactions = useMemo(() => {
     return transactions.filter(t => {
       const isApproved = t.status === 'approved';
@@ -83,13 +90,6 @@ const App = () => {
       return isApproved && matchStart && matchEnd && matchMember;
     });
   }, [transactions, reportFilters]);
-
-  const stats = useMemo(() => {
-    const approved = transactions.filter(t => t.status === 'approved');
-    const simpanan = approved.filter(t => t.type === 'simpanan').reduce((s, t) => s + Number(t.amount), 0);
-    const pengeluaran = approved.filter(t => t.type === 'pengeluaran').reduce((s, t) => s + Number(t.amount), 0);
-    return { total: simpanan - pengeluaran, simpanan, pengeluaran };
-  }, [transactions]);
 
   const handleAdminLogin = (e) => {
     e.preventDefault();
@@ -105,19 +105,58 @@ const App = () => {
       else if (action === 'remove') await updateDoc(masterDoc, { [field]: arrayRemove(value) });
       else await updateDoc(masterDoc, { [field]: value });
       notify("Berhasil diperbarui", "success");
-    } catch (err) { notify("Gagal update"); }
+    } catch (err) { notify("Gagal update data"); }
   };
+
+  const handleSaveTransaction = async (e) => {
+    e.preventDefault();
+    if (!formData.member || !formData.amount || !formData.category || !formData.proofImage) {
+        return notify("Semua kolom dan foto wajib diisi!");
+    }
+    if (formData.type === 'simpanan' && Number(formData.amount) < masterData.minTransfer) {
+        return notify(`Minimal simpanan Rp ${masterData.minTransfer.toLocaleString()}`);
+    }
+    setIsSubmitting(true);
+    try {
+      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'transactions'), {
+        ...formData, amount: Number(formData.amount), createdAt: new Date().toISOString(),
+        userId: user.uid, userName: formData.member, status: 'waiting' 
+      });
+      setFormData({ ...formData, amount: '', description: '', proofImage: null });
+      notify("Data terkirim ke Admin", "success"); setActiveTab('dashboard');
+    } catch (err) { notify("Gagal simpan"); } finally { setIsSubmitting(false); }
+  };
+
+  if (!role) {
+    return (
+      <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
+        <div className="bg-white p-8 rounded-3xl shadow-xl max-w-md w-full text-center">
+          <div className="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-4"><ShieldCheck className="text-white" /></div>
+          <h1 className="text-2xl font-black mb-6">E-MANEKAT</h1>
+          <div className="space-y-3">
+            <button onClick={() => setShowLoginModal(true)} className="w-full p-4 bg-blue-600 text-white rounded-2xl font-bold flex items-center justify-center gap-2"><Lock size={18}/> Admin Login</button>
+            <button onClick={() => setRole('user')} className="w-full p-4 bg-emerald-50 text-emerald-700 rounded-2xl font-bold border-2 border-emerald-100">Masuk Keluarga</button>
+          </div>
+        </div>
+        {showLoginModal && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+            <form onSubmit={handleAdminLogin} className="bg-white p-6 rounded-3xl w-full max-w-sm shadow-2xl">
+              <h2 className="font-black text-center mb-4 uppercase text-slate-400 text-xs tracking-widest">Verifikasi</h2>
+              <input type="text" placeholder="Username" className="w-full p-4 bg-slate-50 border rounded-2xl mb-3 outline-none" onChange={e => setLoginCreds({...loginCreds, username: e.target.value})} />
+              <input type="password" placeholder="Password" className="w-full p-4 bg-slate-50 border rounded-2xl mb-4 outline-none" onChange={e => setLoginCreds({...loginCreds, password: e.target.value})} />
+              <button className="w-full bg-blue-600 text-white p-4 rounded-2xl font-black uppercase">Masuk</button>
+              <button type="button" onClick={() => setShowLoginModal(false)} className="w-full mt-4 text-slate-400 text-xs font-black uppercase underline">Batal</button>
+            </form>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 md:pl-64 flex flex-col font-sans">
-      {/* NOTIFICATION UI */}
-      {notification && (
-        <div className={`fixed top-4 right-4 p-4 rounded-2xl text-white font-bold shadow-2xl z-[100] ${notification.type === 'success' ? 'bg-emerald-600' : 'bg-rose-600'}`}>
-          {notification.message}
-        </div>
-      )}
+      {notification && <div className={`fixed top-4 right-4 p-4 rounded-2xl text-white font-bold shadow-2xl z-[100] ${notification.type === 'success' ? 'bg-emerald-600' : 'bg-rose-600'}`}>{notification.message}</div>}
       
-      {/* NAVIGATION */}
       <nav className="fixed bottom-0 left-0 w-full bg-white border-t md:top-0 md:left-0 md:w-64 md:h-full md:border-r z-40 flex md:flex-col p-2 md:p-6 print:hidden">
         <div className="hidden md:block mb-10"><h1 className="text-xl font-black text-blue-600 italic">E-MANEKAT</h1></div>
         <div className="flex md:flex-col w-full gap-1">
@@ -130,7 +169,6 @@ const App = () => {
         </div>
       </nav>
 
-      {/* CONTENT */}
       <main className="p-4 md:p-8 flex-grow max-w-5xl w-full mx-auto">
         {activeTab === 'dashboard' && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -140,7 +178,84 @@ const App = () => {
           </div>
         )}
 
-        {/* --- MENU SETTINGS MASTER --- */}
+        {activeTab === 'input' && (
+          <div className="bg-white p-6 rounded-3xl border shadow-sm max-w-2xl mx-auto">
+            <h2 className="font-black text-xl mb-6 flex items-center gap-2"><PlusCircle className="text-blue-600"/> INPUT DATA</h2>
+            <form onSubmit={handleSaveTransaction} className="space-y-4">
+              <div className="grid grid-cols-2 gap-2">
+                <button type="button" onClick={() => setFormData({...formData, type: 'simpanan'})} className={`p-4 rounded-xl border-2 font-black transition-all ${formData.type === 'simpanan' ? 'border-emerald-500 bg-emerald-50 text-emerald-600' : 'border-slate-50 text-slate-300'}`}>Pemasukan</button>
+                <button type="button" onClick={() => setFormData({...formData, type: 'pengeluaran'})} className={`p-4 rounded-xl border-2 font-black transition-all ${formData.type === 'pengeluaran' ? 'border-rose-500 bg-rose-50 text-rose-600' : 'border-slate-50 text-slate-300'}`}>Pengeluaran</button>
+              </div>
+              <select className="w-full p-4 bg-slate-50 border rounded-2xl font-bold outline-none" value={formData.member} onChange={e => setFormData({...formData, member: e.target.value})}>
+                <option value="">Pilih Anggota *</option>
+                {masterData.familyMembers.map(m => <option key={m} value={m}>{m}</option>)}
+              </select>
+              <select className="w-full p-4 bg-slate-50 border rounded-2xl font-bold outline-none" value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})}>
+                <option value="">Pilih Kategori *</option>
+                {masterData.categories.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+              <input type="number" placeholder="Nominal Rp *" className="w-full p-4 bg-slate-50 border rounded-2xl font-black text-2xl outline-none" value={formData.amount} onChange={e => setFormData({...formData, amount: e.target.value})} />
+              <textarea placeholder="Keterangan transaksi..." className="w-full p-4 bg-slate-50 border rounded-2xl outline-none" value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} />
+              <div className="border-2 border-dashed p-6 rounded-2xl text-center bg-slate-50/50 cursor-pointer" onClick={() => fileInputRef.current.click()}>
+                <input type="file" hidden ref={fileInputRef} onChange={e => {
+                  const reader = new FileReader();
+                  reader.onload = () => setFormData({...formData, proofImage: reader.result});
+                  reader.readAsDataURL(e.target.files[0]);
+                }} />
+                <span className="text-xs font-black text-slate-400 uppercase tracking-widest">{formData.proofImage ? "✅ Foto Berhasil Dimuat" : "📸 Upload Bukti Foto *"}</span>
+              </div>
+              <button disabled={isSubmitting} className="w-full p-5 bg-blue-600 text-white rounded-2xl font-black shadow-lg uppercase tracking-widest">{isSubmitting ? "Memproses..." : "Kirim Pengajuan"}</button>
+            </form>
+          </div>
+        )}
+
+        {activeTab === 'approval' && role === 'admin' && (
+            <div className="space-y-4">
+                <h3 className="font-black text-slate-400 uppercase text-xs tracking-widest mb-6">Konfirmasi Admin</h3>
+                {transactions.filter(t => t.status === 'waiting').length === 0 ? <div className="p-20 text-center text-slate-300 font-bold italic">Belum ada transaksi baru</div> : 
+                    transactions.filter(t => t.status === 'waiting').map(t => (
+                        <div key={t.id} className="bg-white p-5 rounded-3xl border flex flex-col md:flex-row items-center justify-between gap-4 shadow-sm">
+                            <div className="flex items-center gap-4 w-full">
+                                <div className={`p-4 rounded-2xl ${t.type === 'simpanan' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>{t.type === 'simpanan' ? <ArrowUpCircle size={24}/> : <ArrowDownCircle size={24}/>}</div>
+                                <div><p className="font-black text-slate-800 leading-none mb-1">{t.description}</p><p className="text-[10px] font-bold text-slate-400 uppercase">{t.userName} • Rp {t.amount.toLocaleString()}</p></div>
+                            </div>
+                            <div className="flex gap-2 w-full md:w-auto">
+                                <button onClick={() => setViewImage(t.proofImage)} className="flex-1 md:flex-none p-3 bg-blue-50 text-blue-600 rounded-xl font-black text-xs uppercase px-5">Bukti</button>
+                                <button onClick={() => updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'transactions', t.id), { status: 'approved' })} className="flex-1 md:flex-none p-3 bg-emerald-600 text-white rounded-xl font-black text-xs uppercase px-8 shadow-lg shadow-emerald-100">Sah</button>
+                            </div>
+                        </div>
+                    ))
+                }
+            </div>
+        )}
+
+        {activeTab === 'report' && (
+            <div className="space-y-6">
+                <div className="bg-white p-4 rounded-3xl border shadow-sm flex flex-wrap gap-4 print:hidden items-center">
+                    <input type="date" className="p-2 bg-slate-50 rounded-xl text-xs font-bold outline-none border" value={reportFilters.startDate} onChange={e => setReportFilters({...reportFilters, startDate: e.target.value})} />
+                    <input type="date" className="p-2 bg-slate-50 rounded-xl text-xs font-bold outline-none border" value={reportFilters.endDate} onChange={e => setReportFilters({...reportFilters, endDate: e.target.value})} />
+                    <select className="p-2 bg-slate-50 rounded-xl text-xs font-bold outline-none border" value={reportFilters.member} onChange={e => setReportFilters({...reportFilters, member: e.target.value})}>
+                        <option value="">Semua Anggota</option>
+                        {masterData.familyMembers.map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                    <button onClick={() => window.print()} className="ml-auto bg-blue-600 text-white p-2 px-6 rounded-xl text-xs font-black flex items-center gap-2 shadow-lg shadow-blue-100"><Printer size={16}/> PRINT</button>
+                </div>
+                <div className="bg-white rounded-3xl border overflow-hidden shadow-sm overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                        <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 border-b"><tr className="border-b"><th className="p-5">Tanggal</th><th className="p-5">Nama</th><th className="p-5">Keterangan</th><th className="p-5 text-right">Nominal</th></tr></thead>
+                        <tbody className="divide-y">
+                            {filteredTransactions.map(t => (
+                                <tr key={t.id} className="hover:bg-slate-50/50"><td className="p-5 font-bold opacity-50">{t.date}</td><td className="p-5 font-black">{t.userName}</td><td className="p-5">{t.description}</td><td className={`p-5 text-right font-black ${t.type === 'simpanan' ? 'text-emerald-600' : 'text-rose-600'}`}>{t.amount.toLocaleString()}</td></tr>
+                            ))}
+                        </tbody>
+                        <tfoot className="bg-slate-50/50 border-t font-black">
+                            <tr><td colSpan="3" className="p-5 text-right text-[10px] uppercase text-slate-400">Total Akhir</td><td className="p-5 text-right text-blue-600 text-sm">Rp {filteredTransactions.reduce((acc, t) => acc + (t.type === 'simpanan' ? t.amount : -t.amount), 0).toLocaleString()}</td></tr>
+                        </tfoot>
+                    </table>
+                </div>
+            </div>
+        )}
+
         {activeTab === 'settings' && role === 'admin' && (
           <div className="space-y-6">
             <div className="bg-white p-6 rounded-3xl border shadow-sm">
@@ -152,34 +267,32 @@ const App = () => {
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="bg-white p-6 rounded-3xl border shadow-sm">
-                    <h3 className="text-xs font-black text-slate-400 uppercase mb-4 tracking-widest">Kategori</h3>
+                    <h3 className="text-xs font-black text-slate-400 uppercase mb-4 tracking-widest">Kategori Transaksi</h3>
                     <div className="flex gap-2 mb-4">
-                        <input type="text" placeholder="Kategori baru..." className="flex-1 p-3 bg-slate-50 rounded-xl outline-none font-bold text-sm" value={newCategory} onChange={e => setNewCategory(e.target.value)} />
+                        <input type="text" placeholder="Tambah..." className="flex-1 p-3 bg-slate-50 rounded-xl outline-none font-bold text-sm" value={newCategory} onChange={e => setNewCategory(e.target.value)} />
                         <button onClick={() => { if(newCategory) { updateMaster('categories', newCategory); setNewCategory(''); } }} className="bg-blue-600 text-white p-3 rounded-xl"><Plus size={18}/></button>
                     </div>
                     <div className="space-y-2 max-h-48 overflow-y-auto">
                         {masterData.categories.map(c => (
-                            <div key={c} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl font-bold text-xs">{c} <button onClick={() => updateMaster('categories', c, 'remove')} className="text-rose-500"><Trash2 size={14}/></button></div>
+                            <div key={c} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl font-bold text-[10px] uppercase">{c} <button onClick={() => updateMaster('categories', c, 'remove')} className="text-rose-500 hover:bg-rose-50 p-1 rounded-lg"><Trash2 size={14}/></button></div>
                         ))}
                     </div>
                 </div>
                 <div className="bg-white p-6 rounded-3xl border shadow-sm">
-                    <h3 className="text-xs font-black text-slate-400 uppercase mb-4 tracking-widest">Anggota Keluarga</h3>
+                    <h3 className="text-xs font-black text-slate-400 uppercase mb-4 tracking-widest">Daftar Anggota</h3>
                     <div className="flex gap-2 mb-4">
-                        <input type="text" placeholder="Nama baru..." className="flex-1 p-3 bg-slate-50 rounded-xl outline-none font-bold text-sm" value={newMember} onChange={e => setNewMember(e.target.value)} />
+                        <input type="text" placeholder="Tambah..." className="flex-1 p-3 bg-slate-50 rounded-xl outline-none font-bold text-sm" value={newMember} onChange={e => setNewMember(e.target.value)} />
                         <button onClick={() => { if(newMember) { updateMaster('familyMembers', newMember); setNewMember(''); } }} className="bg-emerald-600 text-white p-3 rounded-xl"><Plus size={18}/></button>
                     </div>
                     <div className="space-y-2 max-h-48 overflow-y-auto">
                         {masterData.familyMembers.map(m => (
-                            <div key={m} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl font-bold text-xs">{m} <button onClick={() => updateMaster('familyMembers', m, 'remove')} className="text-rose-500"><Trash2 size={14}/></button></div>
+                            <div key={m} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl font-bold text-[10px] uppercase">{m} <button onClick={() => updateMaster('familyMembers', m, 'remove')} className="text-rose-500 hover:bg-rose-50 p-1 rounded-lg"><Trash2 size={14}/></button></div>
                         ))}
                     </div>
                 </div>
             </div>
           </div>
         )}
-
-        {/* ... (Halaman lainnya: Input, Report, Approval tetap sama strukturnya) ... */}
 
         <footer className="mt-12 pb-10 text-center print:hidden">
           <div className="pt-8 border-t border-slate-200">
@@ -189,58 +302,45 @@ const App = () => {
         </footer>
       </main>
 
-      {/* MODAL IMAGE VIEW */}
       {viewImage && (
         <div className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4" onClick={() => setViewImage(null)}>
-          <div className="max-w-xl w-full bg-white rounded-3xl relative" onClick={e => e.stopPropagation()}>
+          <div className="max-w-xl w-full bg-white rounded-3xl relative animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
              <img src={viewImage} className="w-full h-auto rounded-3xl p-2" alt="Proof" />
-             <button onClick={() => setViewImage(null)} className="absolute -top-4 -right-4 bg-white p-3 rounded-full shadow-2xl font-black"><X size={20}/></button>
+             <button onClick={() => setViewImage(null)} className="absolute -top-4 -right-4 bg-white p-3 rounded-full shadow-2xl font-black hover:bg-rose-500 hover:text-white transition-colors"><X size={20}/></button>
           </div>
-        </div>
-      )}
-
-      {/* LOGIN MODAL */}
-      {showLoginModal && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <form onSubmit={handleAdminLogin} className="bg-white p-6 rounded-3xl w-full max-w-sm">
-            <h2 className="font-black text-center mb-4 uppercase text-slate-400 text-xs tracking-widest">Verifikasi Admin</h2>
-            <input type="text" placeholder="Username" className="w-full p-4 bg-slate-50 border rounded-2xl mb-3 outline-none" onChange={e => setLoginCreds({...loginCreds, username: e.target.value})} />
-            <input type="password" placeholder="Password" className="w-full p-4 bg-slate-50 border rounded-2xl mb-4 outline-none" onChange={e => setLoginCreds({...loginCreds, password: e.target.value})} />
-            <button className="w-full bg-blue-600 text-white p-4 rounded-2xl font-black uppercase">Masuk</button>
-            <button type="button" onClick={() => setShowLoginModal(false)} className="w-full mt-4 text-slate-400 text-xs font-black uppercase underline">Batal</button>
-          </form>
         </div>
       )}
 
       <style>{`
         @media print { 
           nav, button, footer, .print\\:hidden { display: none !important; } 
-          body { background: white !important; margin: 0 !important; }
+          body { background: white !important; margin: 0 !important; color: black !important; }
           main { margin: 0 !important; padding: 0 !important; width: 100% !important; max-width: none !important; } 
           .md\\:pl-64 { padding-left: 0 !important; }
+          .border { border-color: #eee !important; }
+          .shadow-sm, .shadow-xl { shadow: none !important; }
         }
       `}</style>
     </div>
   );
 };
 
-// COMPONENT HELPER (PENTING: Jangan taruh di dalam function App)
 const NavItem = ({ icon, label, active, onClick, badge }) => (
-  <button onClick={onClick} className={`relative flex flex-col md:flex-row items-center gap-2 md:gap-4 p-3 md:p-4 md:w-full rounded-2xl transition-all ${active ? 'text-blue-600 md:bg-blue-50 font-black' : 'text-slate-400'}`}>
+  <button onClick={onClick} className={`relative flex flex-col md:flex-row items-center gap-2 md:gap-4 p-3 md:p-4 md:w-full rounded-2xl transition-all ${active ? 'text-blue-600 md:bg-blue-50 font-black' : 'text-slate-400 hover:bg-slate-50 hover:text-slate-600'}`}>
     {icon}
-    <span className="text-[9px] md:text-sm uppercase font-bold">{label}</span>
-    {badge > 0 && <span className="absolute top-1 right-2 bg-rose-500 text-white text-[9px] font-black w-4 h-4 rounded-full flex items-center justify-center border-2 border-white">{badge}</span>}
+    <span className="text-[9px] md:text-sm uppercase font-bold tracking-tight">{label}</span>
+    {badge > 0 && <span className="absolute top-1 right-2 md:right-4 bg-rose-500 text-white text-[9px] font-black w-4 h-4 rounded-full flex items-center justify-center border-2 border-white animate-pulse">{badge}</span>}
   </button>
 );
 
 const StatCard = ({ label, value, icon, color }) => (
-  <div className="bg-white p-6 rounded-3xl border flex items-center gap-4 shadow-sm">
+  <div className="bg-white p-6 rounded-3xl border flex items-center gap-4 shadow-sm hover:shadow-md transition-shadow">
     <div className={`p-4 rounded-2xl ${color} text-white shadow-xl`}>{icon}</div>
     <div className="overflow-hidden">
-      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">{label}</p>
-      <h2 className="text-xl font-black text-slate-800 truncate">Rp {value.toLocaleString()}</h2>
+      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 truncate">{label}</p>
+      <h2 className="text-xl font-black text-slate-800 tracking-tighter truncate">Rp {value.toLocaleString()}</h2>
     </div>
   </div>
 );
 
-export default App; // BARIS 809 (TUTUP DENGAN BENAR)
+export default App;
